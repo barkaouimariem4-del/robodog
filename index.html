@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robodog : commande</title>
+<style>
+  :root {
+    --bg: #14171c; --panel: #1d222a; --line: #343c48;
+    --text: #e8ecf1; --muted: #98a3b3; --accent: #e0457b; --ok: #4cc38a; --bad: #e5604d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif; padding: 16px;
+  }
+  main { width: min(420px, 100%); }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); font-size: .95rem; }
+  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: .95rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--ok); }
+  .pad {
+    display: grid; gap: 10px; justify-content: center;
+    grid-template-columns: repeat(3, 96px); grid-template-rows: repeat(2, 96px);
+    margin-bottom: 20px;
+  }
+  .key {
+    background: var(--panel); border: 2px solid var(--line); border-radius: 14px;
+    color: var(--text); font: inherit; font-size: 1.8rem; font-weight: 700;
+    display: grid; place-items: center; cursor: pointer; touch-action: none; user-select: none;
+  }
+  .key small { display: block; font-size: .7rem; font-weight: 400; color: var(--muted); }
+  .key.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .key.active small { color: #fff; }
+  .key:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+  [data-k="up"] { grid-column: 2; grid-row: 1; }
+  [data-k="left"] { grid-column: 1; grid-row: 2; }
+  [data-k="down"] { grid-column: 2; grid-row: 2; }
+  [data-k="right"] { grid-column: 3; grid-row: 2; }
+  .action {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; font-size: 1.05rem; margin-bottom: 14px;
+  }
+  .help { color: var(--muted); font-size: .85rem; line-height: 1.5; margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Robodog</h1>
+  <p class="sub">Maintiens une touche pour bouger. Relâche pour arrêter.</p>
+
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">Connexion…</span></div>
+
+  <div class="pad">
+    <button class="key" data-k="up">W<small>avancer</small></button>
+    <button class="key" data-k="left">A<small>gauche</small></button>
+    <button class="key" data-k="down">S<small>reculer</small></button>
+    <button class="key" data-k="right">D<small>droite</small></button>
+  </div>
+
+  <div class="action" id="action">Arrêt</div>
+
+  <p class="help">
+    Clavier AZERTY : Z et Q marchent aussi. Les flèches et les boutons tactiles aussi.
+    W + A ou W + D : avancer en tournant. Le robot s'arrête si la page perd le focus
+    ou si la connexion est coupée.
+  </p>
+</main>
+
+<script>
+  // On lit la lettre écrite sur la touche (e.key), donc ça marche en QWERTY et en AZERTY.
+  const KEYS = {
+    w: "up", z: "up", arrowup: "up",
+    s: "down", arrowdown: "down",
+    a: "left", q: "left", arrowleft: "left",
+    d: "right", arrowright: "right",
+  };
+  const held = new Set();
+  let last = "";
+
+  const dot = document.getElementById("dot");
+  const conn = document.getElementById("conn");
+  const actionEl = document.getElementById("action");
+
+  function command() {
+    const vx = (held.has("up") ? 1 : 0) - (held.has("down") ? 1 : 0);
+    const turn = (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0);
+    return { vx, turn };
+  }
+
+  function label({ vx, turn }) {
+    const move = vx > 0 ? "Avance" : vx < 0 ? "Recule" : "";
+    const rot = turn > 0 ? "gauche" : turn < 0 ? "droite" : "";
+    if (!move && !rot) return "Arrêt";
+    if (move && rot) return `${move} en tournant à ${rot}`;
+    return move || `Tourne à ${rot} sur place`;
+  }
+
+  async function send(cmd) {
+    try {
+      await fetch("/cmd", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cmd), keepalive: true,
+      });
+      dot.classList.add("on"); conn.textContent = "Connecté au robot";
+    } catch {
+      dot.classList.remove("on"); conn.textContent = "Hors ligne : vérifie le Wi-Fi et le serveur";
+    }
+  }
+
+  function refresh() {
+    document.querySelectorAll(".key").forEach(b =>
+      b.classList.toggle("active", held.has(b.dataset.k)));
+    const cmd = command();
+    actionEl.textContent = label(cmd);
+    const sig = JSON.stringify(cmd);
+    if (sig !== last) { last = sig; send(cmd); }
+  }
+
+  function release() { held.clear(); refresh(); }
+
+  addEventListener("keydown", e => {
+    const k = KEYS[e.key.toLowerCase()];
+    if (!k) return;
+    e.preventDefault();
+    if (e.repeat) return;               // ignore la répétition automatique du clavier
+    held.add(k); refresh();
+  });
+  addEventListener("keyup", e => {
+    const k = KEYS[e.key.toLowerCase()];
+    if (!k) return;
+    held.delete(k); refresh();
+  });
+
+  // Sécurité : on arrête le robot si la page perd le focus.
+  addEventListener("blur", release);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) release(); });
+
+  // Boutons tactiles / souris
+  document.querySelectorAll(".key").forEach(b => {
+    b.addEventListener("pointerdown", e => { e.preventDefault(); held.add(b.dataset.k); refresh(); });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(ev =>
+      b.addEventListener(ev, () => { held.delete(b.dataset.k); refresh(); }));
+  });
+
+  // Signal de vie : tant qu'une touche est tenue, on renvoie la commande.
+  // Le serveur arrête le robot s'il ne reçoit plus rien pendant 0,4 s.
+  setInterval(() => {
+    const cmd = command();
+    if (cmd.vx || cmd.turn) send(cmd);
+  }, 150);
+
+  send({ vx: 0, turn: 0 });
+</script>
+</body>
+</html>
